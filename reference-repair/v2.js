@@ -1,6 +1,6 @@
 "use strict";
 const $=id=>document.getElementById(id), board=$("board"), sceneEl=$("scene");
-let source=null, meta=null, pg=0, refs={}, txs=[], cursor=0, selected=null, mode="select", drag=null, draft=null, candidate=null, busy=false, exactPages=null;
+let source=null, meta=null, pg=0, refs={}, txs=[], cursor=0, selected=null, mode="select", drag=null, draft=null, candidate=null, busy=false, exactPages=null, repairTarget=null;
 const copy=x=>JSON.parse(JSON.stringify(x)), setStatus=x=>$("status").textContent=x;
 const activeTx=()=>txs.slice(0,cursor), op=(kind,id,fields={})=>({kind,id,slide:pg,...fields});
 const currentPage=()=>meta?.scene[pg];
@@ -58,7 +58,7 @@ function panel(){
     ["x","y","w","h"].forEach((k,i)=>$(k).value=(a.box[i]*100).toFixed(2));
     $("rotation").value=a.rotation;
     if(a.kind==="text"){for(const k of ["font","size","color","align"])$(k).value=a[k];for(const k of ["bold","italic"])$(k).classList.toggle("active",!!a[k]);}
-    $("recover").disabled=busy||!refs[pg]||a.kind!=="picture"||a.rotation%360!==0;
+    $("recover").disabled=busy||!refs[pg]||a.kind!=="picture"||a.rotation%360!==0;$("pick-replace").disabled=$("recover").disabled;$("match").disabled=$("recover").disabled||!a.asset;
   }
   $("layers").replaceChildren();
   for(const o of objects().reverse()){
@@ -74,9 +74,9 @@ function commit(label,ops,start=performance.now()){
   if(!ops.length)return;
   txs=txs.slice(0,cursor);txs.push({label,ops,ms:performance.now()-start,time:Date.now()});cursor=txs.length;draft=null;live();refresh();setStatus(label+" · 已应用，可撤销");
 }
-function chooseMode(m){mode=m;$("select").classList.toggle("active",m==="select");$("region").classList.toggle("active",m==="region");if(m==="region"){selected=null;$("opacity").value=100;$("overlay").style.opacity=1;setStatus("在原图上框选需要恢复的区域。");}else{$("opacity").value=0;$("overlay").style.opacity=0;}live();refresh();}
+function chooseMode(m){if(m!=="region")repairTarget=null;mode=m;$("select").classList.toggle("active",m==="select");$("region").classList.toggle("active",m==="region");if(m==="region"){selected=null;$("opacity").value=100;$("overlay").style.opacity=1;setStatus("在原图上框选需要恢复的区域。");}else{$("opacity").value=0;$("overlay").style.opacity=0;}live();refresh();}
 $("select").onclick=()=>chooseMode("select");
-$("region").onclick=()=>{if(!refs[pg])return setStatus("先上传当前页的原图。");chooseMode("region");};
+$("region").onclick=()=>{if(!refs[pg])return setStatus("先上传当前页的原图。");repairTarget=null;chooseMode("region");};
 $("opacity").oninput=()=>{$("overlay").style.opacity=$("opacity").value/100;};
 function point(e){const r=board.getBoundingClientRect();return [(e.clientX-r.left)/r.width,(e.clientY-r.top)/r.height];}
 const clamp=(x,l=0,h=1)=>Math.max(l,Math.min(h,x));
@@ -106,7 +106,7 @@ board.addEventListener("pointermove",e=>{
 });
 board.addEventListener("pointerup",()=>{
   if(!drag)return;const d=drag;drag=null;
-  if(d.kind==="region"){draw();if(d.box[2]>.003&&d.box[3]>.003)propose(d.box,null,d.started);return;}
+  if(d.kind==="region"){draw();if(d.box[2]>.003&&d.box[3]>.003)propose(d.box,repairTarget,d.started);return;}
   const b=draft?.box;draft=null;
   if(b&&b.some((v,i)=>Math.abs(v-d.box[i])>1e-5))commit(d.kind==="move"?"移动对象":"缩放对象",[op("layout",d.id,{box:b})],d.started);else refresh();
 });
@@ -119,7 +119,7 @@ function editText(){
   t.onkeydown=e=>{if(e.key==="Escape"){cancelled=true;t.blur();}else if(e.key==="Enter"&&(e.ctrlKey||e.metaKey))t.blur();};
   t.onblur=()=>{const text=t.value;t.remove();if(!cancelled&&text!==a.text)commit("编辑文字",[op("text",a.id,{text})],started);};
 }
-board.addEventListener("dblclick",e=>{if(mode==="select"&&e.target.closest(".object"))editText();});
+board.addEventListener("dblclick",e=>{if(mode==="select"&&chosen()){const [x,y]=point(e),b=chosen().box;if(x>=b[0]&&x<=b[0]+b[2]&&y>=b[1]&&y<=b[1]+b[3])editText();}});
 $("edittext").onclick=editText;
 for(const k of ["x","y","w","h","rotation"])$(k).onchange=()=>{
   const a=chosen();if(!a)return;
@@ -141,11 +141,49 @@ function propose(b,a,started){
     const asset=crop(refs[pg],b),id=a?a.id:"patch-"+crypto.randomUUID();
     candidate={operation:op(a?"replace":"insert",id,{box:b,asset,rotation:0}),started,label:a?"原图替换图片":"原图取件"};
     $("candidate-img").src=asset;
-    $("candidate-note").textContent=a?"将以原图同位置像素替换选中图片，保留层级；不会新增重复图层。裁剪可能包含原图中重叠的文字或背景，请确认。":"将新增独立可移动图片，不会自动删除其他图层。请确认是否会遮挡现有对象。";
+    $("candidate-note").textContent=a?"将以原图所选位置像素替换选中图片，并移至该位置，保留层级；不会新增重复图层。裁剪可能包含原图中重叠的文字或背景，请确认。":"将新增独立可移动图片，不会自动删除其他图层。请确认是否会遮挡现有对象。";
     $("candidate").showModal();
   }catch(e){setStatus(e.message);}
 }
 $("recover").onclick=()=>{const a=chosen();if(a?.kind==="picture"&&refs[pg])propose(a.box,a,performance.now());};
+
+$("pick-replace").onclick=()=>{const a=chosen();if(a?.kind!=="picture"||!refs[pg])return;repairTarget=a;chooseMode("region");setStatus("在原始设计图上框选正确组件的位置，然后确认替换。");};
+// Coarse-to-fine fixed-scale template matching. Alpha is used only to
+// select visible samples. Ambiguous or weak matches are rejected.
+function matchPosition(ref,asset,b){
+  const W=300,H=Math.round(W*ref.naturalHeight/ref.naturalWidth);
+  const tw=Math.round(b[2]*W),th=Math.round(b[3]*H);
+  if(tw<8||th<8||tw>W*.75||th>H*.75)return null;
+  function pixels(im,w,h){const c=document.createElement("canvas");c.width=w;c.height=h;const x=c.getContext("2d",{willReadFrequently:true});x.drawImage(im,0,0,w,h);return x.getImageData(0,0,w,h).data;}
+  const rp=pixels(ref,W,H),tp=pixels(asset,tw,th),samples=[];
+  let lo=255,hi=0;
+  for(let y=1;y<th-1;y+=Math.max(1,Math.floor(th/8)))for(let x=1;x<tw-1;x+=Math.max(1,Math.floor(tw/8))){
+    const i=(y*tw+x)*4;
+    if(tp[i+3]<230)continue;
+    const lum=(tp[i]+tp[i+1]+tp[i+2])/3;lo=Math.min(lo,lum);hi=Math.max(hi,lum);samples.push([x,y,tp[i],tp[i+1],tp[i+2]]);
+  }
+  if(samples.length<16||hi-lo<25)return null;
+  function cost(x,y){let sum=0;for(const [dx,dy,r,g,b] of samples){const k=((y+dy)*W+x+dx)*4;sum+=Math.abs(r-rp[k])+Math.abs(g-rp[k+1])+Math.abs(b-rp[k+2]);}return sum/(samples.length*3);}
+  const coarse=[];
+  for(let y=0;y<=H-th;y+=3)for(let x=0;x<=W-tw;x+=3)coarse.push({x,y,c:cost(x,y)});
+  coarse.sort((a,b)=>a.c-b.c);
+  if(!coarse.length)return null;
+  let best=coarse[0];
+  for(let y=Math.max(0,best.y-3);y<=Math.min(H-th,coarse[0].y+3);y++)for(let x=Math.max(0,coarse[0].x-3);x<=Math.min(W-tw,coarse[0].x+3);x++){const c=cost(x,y);if(c<best.c)best={x,y,c};}
+  const second=coarse.find(p=>Math.abs(p.x-best.x)>Math.max(4,tw*.2)||Math.abs(p.y-best.y)>Math.max(4,th*.2));
+  if(best.c>24||!second||second.c-best.c<5)return null;
+  return {box:[best.x/W,best.y/H,b[2],b[3]],error:best.c};
+}
+$("match").onclick=()=>task(async()=>{
+  const a=chosen(),started=performance.now();if(!a?.asset||!refs[pg])return;
+  const hit=matchPosition(refs[pg],await loadImg(a.asset),a.box);
+  if(!hit)return setStatus("未找到足够明确的匹配。请使用框选原图替换或手动移动。");
+  candidate={operation:op("layout",a.id,{box:hit.box,rotation:a.rotation}),started,label:"原图匹配归位"};
+  $("candidate-img").src=crop(refs[pg],hit.box);
+  $("candidate-note").textContent="已找到外观近似的候选位置（平均色差 "+hit.error.toFixed(1)+"）。确认后仅移动原图片，不改变其内容。请核实候选是否对应正确组件。";
+  $("candidate").showModal();
+});
+
 $("cancel").onclick=()=>{$("candidate").close();candidate=null;};
 $("confirm").onclick=()=>{if(!candidate)return;const c=candidate;candidate=null;$("candidate").close();chooseMode("select");selected=c.operation.id;commit(c.label,[c.operation],c.started);};
 $("candidate").addEventListener("cancel",()=>{candidate=null;});
@@ -177,7 +215,7 @@ document.addEventListener("keydown",e=>{
   const a=chosen();if(!a)return;
   if(e.key==="Delete"||e.key==="Backspace"){e.preventDefault();$("delete").click();}
   const dirs={ArrowLeft:[-1,0],ArrowRight:[1,0],ArrowUp:[0,-1],ArrowDown:[0,1]};
-  if(dirs[e.key]){e.preventDefault();const [dx,dy]=dirs[e.key],b=a.box.slice(),step=e.shiftKey?.01:.001;b[0]+=dx*step;b[1]+=dy*step;commit("微调位置",[op("layout",a.id,{box:b})]);}
+  if(dirs[e.key]){e.preventDefault();const [dx,dy]=dirs[e.key],b=a.box.slice(),step=e.shiftKey ? .01 : .001;b[0]+=dx*step;b[1]+=dy*step;commit("微调位置",[op("layout",a.id,{box:b})]);}
 });
 document.addEventListener("keyup",e=>{if(e.key.toLowerCase()==="q")$("overlay").style.opacity=$("opacity").value/100;});
 new ResizeObserver(()=>{if(!drag)draw();}).observe(board);
