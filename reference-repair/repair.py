@@ -54,6 +54,12 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(200);self.send_header('Content-Type',typ);self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data)
     def do_GET(self):
         if self.path=='/': self.send((ROOT/'index.html').read_bytes(),'text/html; charset=utf-8')
+        elif self.path=='/sample':
+            deck=ROOT/'samples'/'city.pptx'; ref=ROOT/'samples'/'city.png'
+            if not deck.is_file() or not ref.is_file():
+                self.send(json.dumps({'available':False}).encode())
+            else:
+                self.send(json.dumps({'available':True,'pptx':'data:application/vnd.openxmlformats-officedocument.presentationml.presentation;base64,'+base64.b64encode(deck.read_bytes()).decode(),'reference':'data:image/png;base64,'+base64.b64encode(ref.read_bytes()).decode()}).encode())
         else: self.send_error(404)
     def do_POST(self):
         try:
