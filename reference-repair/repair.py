@@ -4,6 +4,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from PIL import Image, ImageDraw
 from pptx import Presentation
 from pptx.util import Pt
+from object_engine import scene, apply_v2
 ROOT=Path(__file__).parent
 
 def decode(s): return base64.b64decode(s.split(',')[-1],validate=True)
@@ -53,7 +54,9 @@ class Handler(BaseHTTPRequestHandler):
     def send(self,data,typ='application/json'):
         self.send_response(200);self.send_header('Content-Type',typ);self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data)
     def do_GET(self):
-        if self.path=='/': self.send((ROOT/'index.html').read_bytes(),'text/html; charset=utf-8')
+        if self.path=='/': self.send((ROOT/'v2.html').read_bytes(),'text/html; charset=utf-8')
+        elif self.path=='/legacy': self.send((ROOT/'index.html').read_bytes(),'text/html; charset=utf-8')
+        elif self.path=='/v2.js': self.send((ROOT/'v2.js').read_bytes(),'application/javascript; charset=utf-8')
         elif self.path=='/sample':
             deck=ROOT/'samples'/'city.pptx'; ref=ROOT/'samples'/'city.png'
             if not deck.is_file() or not ref.is_file():
@@ -68,7 +71,16 @@ class Handler(BaseHTTPRequestHandler):
             req=json.loads(self.rfile.read(n))
             with tempfile.TemporaryDirectory() as tmp:
                 folder=Path(tmp);source=folder/'input.pptx';source.write_bytes(decode(req['pptx']));p=Presentation(source)
-                if self.path=='/inspect':
+                if self.path=='/v2/inspect':
+                    w=1600;h=round(w*p.slide_height/p.slide_width);pages=render(source,folder,w,h)
+                    self.send(json.dumps(dict(width=w,height=h,width_pt=p.slide_width/12700,scene=scene(p),pages=['data:image/png;base64,'+base64.b64encode(x.read_bytes()).decode() for x in pages])).encode())
+                elif self.path in ('/v2/export','/v2/preview'):
+                    out=folder/'repaired-v2.pptx';apply_v2(source,req['transactions'],out)
+                    if self.path=='/v2/export': self.send(out.read_bytes(),'application/vnd.openxmlformats-officedocument.presentationml.presentation')
+                    else:
+                        w=1600;h=round(w*p.slide_height/p.slide_width);pages=render(out,folder,w,h)
+                        self.send(json.dumps(dict(pages=['data:image/png;base64,'+base64.b64encode(x.read_bytes()).decode() for x in pages])).encode())
+                elif self.path=='/inspect':
                     w=1600;h=round(w*p.slide_height/p.slide_width);pages=render(source,folder,w,h)
                     self.send(json.dumps(dict(width=w,height=h,objects=objects(p),pages=['data:image/png;base64,'+base64.b64encode(x.read_bytes()).decode() for x in pages])).encode())
                 elif self.path in ('/export','/preview'):

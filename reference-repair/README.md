@@ -1,4 +1,4 @@
-# Reference Repair Studio v0.1
+# Reference Repair Studio v2 — object editor MVP
 
 专门针对 PNG 原始设计图 + 已生成 PPTX 的本地人工快捷修复工具。无模型 API 调用。Python 3.10+、LibreOffice/soffice、Poppler/pdftoppm；浏览器使用现代 Chromium 或 Safari。仅监听 127.0.0.1:8765，不要部署到公网（未实现认证和上传安全加固）。
 
@@ -40,3 +40,15 @@ python repair.py
 `pip install playwright` 并安装 Chromium；`python test_ui.py input.pptx reference.png /tmp/repair-ui`：Chromium 实际鼠标选区、组合、补丁、撤销重做、对象删除、重新渲染、导出。当前测试环境的浏览器禁止 localhost 导航，使用 Playwright set_content + 本地 HTTP bridge（真实 Python HTTP 后端）；不是原生浏览器网络 E2E。脚本默认 Linux `/usr/bin/chromium`。
 
 测试输入为用户上传的文件，仓库不公开其原始素材或测试成品。
+
+
+## v2 对象编辑工作台（开发版）
+
+启动方式不变，默认 / 进入新版，/legacy 保留旧版原始设计图修复工作台及其接口。
+
+- 逐页场景树、点击选择、拖动、八方向缩放（非旋转对象）、数字旋转/位置属性、图层、删除、文字和基础样式编辑。
+- 选中图片后从对应原设计位置裁剪，确认后替换原图片并维持其 z-order；原图取件可插入独立图片，继续移动和缩放。原图宽高比校验。
+- 事务撤销/重做、操作历史及交互耗时、原图叠加、真实渲染与 PPTX 导出。历史只保留当前会话，耗时不包含后台真实渲染。
+- 编辑画布采用独立图片和近似 HTML 文字对象；不等同 WPS 渲染。复杂图表、组合内部、特殊形状和主题字体等预览不完整。原生 PPTX 仍由后端按事务修改；实际结果请用真实渲染检查。文字改写保留每段首 run 的样式，不保证复杂混排。
+- 原图同位置裁剪并非自动分割或语义匹配；可能带入背景或重叠文字。新增取件不会自动删除旧图层。自动匹配、缺陷诊断、复杂背景分离、项目持久化尚未实现。
+- 回归测试：在 reference-repair 目录安装 requirements 后运行 python -m unittest test_object_engine.py。该测试是合成对象的导出回读测试，不代表城市样例或 WPS 兼容性已经验证。
