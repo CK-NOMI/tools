@@ -1,4 +1,4 @@
-import base64, io, json, subprocess, tempfile
+import base64, io, json, subprocess, tempfile, uuid
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from PIL import Image, ImageDraw
@@ -57,7 +57,7 @@ class Handler(BaseHTTPRequestHandler):
         else: self.send_error(404)
     def do_POST(self):
         try:
-            n=int(self.headers['Content-Length'])
+            n=int(self.headers['Content-Length']);
             if n>100_000_000: raise ValueError('payload too large')
             req=json.loads(self.rfile.read(n))
             with tempfile.TemporaryDirectory() as tmp:
